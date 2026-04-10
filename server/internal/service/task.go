@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/mention"
+	"github.com/multica-ai/multica/server/internal/orchestration"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -28,6 +29,142 @@ type TaskService struct {
 
 func NewTaskService(q *db.Queries, hub *realtime.Hub, bus *events.Bus) *TaskService {
 	return &TaskService{Queries: q, Hub: hub, Bus: bus}
+}
+
+type executionTarget struct {
+	RuntimeID        pgtype.UUID
+	LeaseID          pgtype.UUID
+	ExecutionBackend string
+}
+
+func defaultRuntimePolicyRow(workspaceID pgtype.UUID) db.RuntimePolicy {
+	defaults := orchestration.DefaultRuntimePolicy(util.UUIDToString(workspaceID))
+	return db.RuntimePolicy{
+		WorkspaceID:               workspaceID,
+		SharedPoolEnabled:         defaults.SharedPoolEnabled,
+		PrivateRuntimeScope:       defaults.PrivateRuntimeScope,
+		DefaultRuntimePlacement:   defaults.DefaultRuntimePlacement,
+		DefaultProvider:           defaults.DefaultProvider,
+		AllowDaytona:              defaults.AllowDaytona,
+		AllowModal:                defaults.AllowModal,
+		AutoStopEnabled:           defaults.AutoStopEnabled,
+		AutoDeleteEnabled:         defaults.AutoDeleteEnabled,
+		IdleTtlMinutes:            int32(defaults.IdleTTLMinutes),
+		MaxPrivateRuntimesPerUser: int32(defaults.MaxPrivateRuntimesPerUser),
+		MaxSharedRuntimes:         int32(defaults.MaxSharedRuntimes),
+		Metadata:                  defaults.Metadata,
+	}
+}
+
+func (s *TaskService) loadRuntimePolicy(ctx context.Context, workspaceID pgtype.UUID) (db.RuntimePolicy, error) {
+	policy, err := s.Queries.GetRuntimePolicy(ctx, workspaceID)
+	if err == nil {
+		return policy, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return defaultRuntimePolicyRow(workspaceID), nil
+	}
+	return db.RuntimePolicy{}, err
+}
+
+func chooseManagedLease(leases []db.RuntimeLease) (executionTarget, bool) {
+	for _, lease := range leases {
+		if lease.State != string(orchestration.RuntimeLeaseStateActive) {
+			continue
+		}
+		if lease.Backend == string(orchestration.RuntimeBackendLocal) && !lease.RuntimeID.Valid {
+			continue
+		}
+		return executionTarget{
+			RuntimeID:        lease.RuntimeID,
+			LeaseID:          lease.ID,
+			ExecutionBackend: lease.Backend,
+		}, true
+	}
+	return executionTarget{}, false
+}
+
+func chooseOnlineRuntime(runtimes []db.AgentRuntime) (executionTarget, bool) {
+	for _, runtime := range runtimes {
+		if runtime.Status != "online" {
+			continue
+		}
+		return executionTarget{
+			RuntimeID:        runtime.ID,
+			ExecutionBackend: string(orchestration.RuntimeBackendLocal),
+		}, true
+	}
+	return executionTarget{}, false
+}
+
+func managedExecutionBackendSupported(backend string) bool {
+	switch backend {
+	case string(orchestration.RuntimeBackendModal):
+		return true
+	default:
+		return false
+	}
+}
+
+func fallbackManagedExecutionBackend(policy db.RuntimePolicy) string {
+	if policy.AllowModal && managedExecutionBackendSupported(string(orchestration.RuntimeBackendModal)) {
+		return string(orchestration.RuntimeBackendModal)
+	}
+	if policy.AllowDaytona && managedExecutionBackendSupported(string(orchestration.RuntimeBackendDaytona)) {
+		return string(orchestration.RuntimeBackendDaytona)
+	}
+	return ""
+}
+
+func (s *TaskService) resolveExecutionTarget(ctx context.Context, agent db.Agent) (executionTarget, error) {
+	if agent.RuntimeID.Valid {
+		return executionTarget{
+			RuntimeID:        agent.RuntimeID,
+			ExecutionBackend: string(orchestration.RuntimeBackendLocal),
+		}, nil
+	}
+
+	policy, err := s.loadRuntimePolicy(ctx, agent.WorkspaceID)
+	if err != nil {
+		return executionTarget{}, fmt.Errorf("load runtime policy: %w", err)
+	}
+
+	if agent.OwnerID.Valid {
+		leases, err := s.Queries.ListRuntimeLeasesByOwner(ctx, db.ListRuntimeLeasesByOwnerParams{
+			WorkspaceID: agent.WorkspaceID,
+			OwnerUserID: agent.OwnerID,
+		})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return executionTarget{}, fmt.Errorf("list owner runtime leases: %w", err)
+		}
+		if target, ok := chooseManagedLease(leases); ok {
+			return target, nil
+		}
+	}
+
+	leases, err := s.Queries.ListRuntimeLeases(ctx, agent.WorkspaceID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return executionTarget{}, fmt.Errorf("list runtime leases: %w", err)
+	}
+	if target, ok := chooseManagedLease(leases); ok {
+		return target, nil
+	}
+
+	if policy.SharedPoolEnabled {
+		runtimes, err := s.Queries.ListAgentRuntimes(ctx, agent.WorkspaceID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return executionTarget{}, fmt.Errorf("list agent runtimes: %w", err)
+		}
+		if target, ok := chooseOnlineRuntime(runtimes); ok {
+			return target, nil
+		}
+	}
+
+	if backend := fallbackManagedExecutionBackend(policy); backend != "" {
+		return executionTarget{ExecutionBackend: backend}, nil
+	}
+
+	return executionTarget{}, fmt.Errorf("no runtime or supported orchestration backend available")
 }
 
 // EnqueueTaskForIssue creates a queued task for an agent-assigned issue.
@@ -48,9 +185,11 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 		slog.Debug("task enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agent.ID))
 		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
 	}
-	if !agent.RuntimeID.Valid {
-		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "agent has no runtime")
-		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
+
+	target, err := s.resolveExecutionTarget(ctx, agent)
+	if err != nil {
+		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
+		return db.AgentTaskQueue{}, err
 	}
 
 	var commentID pgtype.UUID
@@ -60,7 +199,9 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:          issue.AssigneeID,
-		RuntimeID:        agent.RuntimeID,
+		RuntimeID:        target.RuntimeID,
+		LeaseID:          target.LeaseID,
+		ExecutionBackend: target.ExecutionBackend,
 		IssueID:          issue.ID,
 		Priority:         priorityToInt(issue.Priority),
 		TriggerCommentID: commentID,
@@ -87,14 +228,18 @@ func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue,
 		slog.Debug("mention task enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
 		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
 	}
-	if !agent.RuntimeID.Valid {
-		slog.Error("mention task enqueue failed: agent has no runtime", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
-		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
+
+	target, err := s.resolveExecutionTarget(ctx, agent)
+	if err != nil {
+		slog.Error("mention task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
+		return db.AgentTaskQueue{}, err
 	}
 
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:          agentID,
-		RuntimeID:        agent.RuntimeID,
+		RuntimeID:        target.RuntimeID,
+		LeaseID:          target.LeaseID,
+		ExecutionBackend: target.ExecutionBackend,
 		IssueID:          issue.ID,
 		Priority:         priorityToInt(issue.Priority),
 		TriggerCommentID: triggerCommentID,
@@ -105,6 +250,40 @@ func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue,
 	}
 
 	slog.Info("mention task enqueued", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
+	return task, nil
+}
+
+// EnqueueChatTask creates a queued task for a chat session.
+// Unlike issue tasks, chat tasks have no issue_id.
+func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession) (db.AgentTaskQueue, error) {
+	agent, err := s.Queries.GetAgent(ctx, chatSession.AgentID)
+	if err != nil {
+		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
+		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
+	}
+
+	target, err := s.resolveExecutionTarget(ctx, agent)
+	if err != nil {
+		return db.AgentTaskQueue{}, err
+	}
+
+	task, err := s.Queries.CreateChatTask(ctx, db.CreateChatTaskParams{
+		AgentID:          chatSession.AgentID,
+		RuntimeID:        target.RuntimeID,
+		LeaseID:          target.LeaseID,
+		ExecutionBackend: target.ExecutionBackend,
+		Priority:         2, // medium priority for chat
+		ChatSessionID:    chatSession.ID,
+	})
+	if err != nil {
+		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
+		return db.AgentTaskQueue{}, fmt.Errorf("create chat task: %w", err)
+	}
+
+	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(chatSession.ID), "agent_id", util.UUIDToString(chatSession.AgentID))
 	return task, nil
 }
 
@@ -197,6 +376,22 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 	return nil, nil
 }
 
+// ClaimManagedTask atomically claims the next queued task for a managed backend.
+func (s *TaskService) ClaimManagedTask(ctx context.Context, backend string) (*db.AgentTaskQueue, error) {
+	task, err := s.Queries.ClaimManagedTask(ctx, backend)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("claim managed task: %w", err)
+	}
+
+	slog.Info("managed task claimed", "task_id", util.UUIDToString(task.ID), "agent_id", util.UUIDToString(task.AgentID), "backend", backend)
+	s.ReconcileAgentStatus(ctx, task.AgentID)
+	s.broadcastTaskDispatch(ctx, task)
+	return &task, nil
+}
+
 // StartTask transitions a dispatched task to running.
 // Issue status is NOT changed here — the agent manages it via the CLI.
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
@@ -238,16 +433,38 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 
-	// Post agent output as a comment, but only for assignment-triggered tasks.
+	// Post agent output as a comment, but only for issue tasks with assignment triggers.
 	// Comment-triggered tasks: the agent replies via CLI with --parent, so
 	// posting here would create a duplicate.
-	if !task.TriggerCommentID.Valid {
+	// Chat tasks: no comment posting needed.
+	if task.IssueID.Valid && !task.TriggerCommentID.Valid {
 		var payload protocol.TaskCompletedPayload
 		if err := json.Unmarshal(result, &payload); err == nil {
 			if payload.Output != "" {
 				s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(payload.Output), "comment", task.TriggerCommentID)
 			}
 		}
+	}
+
+	// For chat tasks, save assistant reply, update session, and broadcast chat:done.
+	if task.ChatSessionID.Valid {
+		var payload protocol.TaskCompletedPayload
+		if err := json.Unmarshal(result, &payload); err == nil && payload.Output != "" {
+			if _, err := s.Queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
+				ChatSessionID: task.ChatSessionID,
+				Role:          "assistant",
+				Content:       redact.Text(payload.Output),
+				TaskID:        task.ID,
+			}); err != nil {
+				slog.Error("failed to save assistant chat message", "task_id", util.UUIDToString(task.ID), "error", err)
+			}
+		}
+		s.Queries.UpdateChatSessionSession(ctx, db.UpdateChatSessionSessionParams{
+			ID:        task.ChatSessionID,
+			SessionID: pgtype.Text{String: sessionID, Valid: sessionID != ""},
+			WorkDir:   pgtype.Text{String: workDir, Valid: workDir != ""},
+		})
+		s.broadcastChatDone(ctx, task)
 	}
 
 	// Reconcile agent status
@@ -285,7 +502,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg s
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg)
 
-	if errMsg != "" {
+	if errMsg != "" && task.IssueID.Valid {
 		s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(errMsg), "system", task.TriggerCommentID)
 	}
 	// Reconcile agent status
@@ -402,12 +619,9 @@ func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTa
 	payload["task_id"] = util.UUIDToString(task.ID)
 	payload["runtime_id"] = util.UUIDToString(task.RuntimeID)
 
-	workspaceID := ""
-	if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
-		workspaceID = util.UUIDToString(issue.WorkspaceID)
-	}
+	workspaceID := s.resolveTaskWorkspaceID(ctx, task)
 	if workspaceID == "" {
-		return // Issue deleted; skip broadcast to avoid global leak
+		return
 	}
 	s.Bus.Publish(events.Event{
 		Type:        protocol.EventTaskDispatch,
@@ -419,23 +633,57 @@ func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTa
 }
 
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue) {
-	workspaceID := ""
-	if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
-		workspaceID = util.UUIDToString(issue.WorkspaceID)
-	}
+	workspaceID := s.resolveTaskWorkspaceID(ctx, task)
 	if workspaceID == "" {
-		return // Issue deleted; skip broadcast to avoid global leak
+		return
+	}
+	payload := map[string]any{
+		"task_id":  util.UUIDToString(task.ID),
+		"agent_id": util.UUIDToString(task.AgentID),
+		"issue_id": util.UUIDToString(task.IssueID),
+		"status":   task.Status,
+	}
+	if task.ChatSessionID.Valid {
+		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
 	}
 	s.Bus.Publish(events.Event{
 		Type:        eventType,
 		WorkspaceID: workspaceID,
 		ActorType:   "system",
 		ActorID:     "",
-		Payload: map[string]any{
-			"task_id":  util.UUIDToString(task.ID),
-			"agent_id": util.UUIDToString(task.AgentID),
-			"issue_id": util.UUIDToString(task.IssueID),
-			"status":   task.Status,
+		Payload:     payload,
+	})
+}
+
+// resolveTaskWorkspaceID determines the workspace ID for a task.
+// For issue tasks, it comes from the issue. For chat tasks, from the chat session.
+func (s *TaskService) resolveTaskWorkspaceID(ctx context.Context, task db.AgentTaskQueue) string {
+	if task.IssueID.Valid {
+		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
+			return util.UUIDToString(issue.WorkspaceID)
+		}
+	}
+	if task.ChatSessionID.Valid {
+		if cs, err := s.Queries.GetChatSession(ctx, task.ChatSessionID); err == nil {
+			return util.UUIDToString(cs.WorkspaceID)
+		}
+	}
+	return ""
+}
+
+func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQueue) {
+	workspaceID := s.resolveTaskWorkspaceID(ctx, task)
+	if workspaceID == "" {
+		return
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventChatDone,
+		WorkspaceID: workspaceID,
+		ActorType:   "system",
+		ActorID:     "",
+		Payload: protocol.ChatDonePayload{
+			ChatSessionID: util.UUIDToString(task.ChatSessionID),
+			TaskID:        util.UUIDToString(task.ID),
 		},
 	})
 }

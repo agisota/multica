@@ -21,8 +21,7 @@ const jsonLd = {
     {
       "@type": "Organization",
       name: "Multica",
-      url: "https://www.multica.ai",
-      sameAs: ["https://github.com/multica-ai/multica"],
+      url: "https://multica.zed.md",
     },
     {
       "@type": "SoftwareApplication",
@@ -30,7 +29,7 @@ const jsonLd = {
       applicationCategory: "ProjectManagement",
       operatingSystem: "Web",
       description:
-        "AI-native task management platform that turns coding agents into real teammates.",
+        "Платформа управления задачами, которая превращает coding agents в участников команды.",
       offers: {
         "@type": "Offer",
         price: "0",
@@ -41,17 +40,12 @@ const jsonLd = {
 };
 
 async function getInitialLocale(): Promise<Locale> {
-  // 1. User's explicit preference (cookie set when they switch language)
   const cookieStore = await cookies();
   const stored = cookieStore.get("multica-locale")?.value;
-  if (stored === "en" || stored === "zh") return stored;
+  if (stored === "ru") return stored;
 
-  // 2. Detect from Accept-Language header
-  const headersList = await headers();
-  const acceptLang = headersList.get("accept-language") ?? "";
-  if (acceptLang.includes("zh")) return "zh";
-
-  return "en";
+  await headers();
+  return "ru";
 }
 
 export default async function LandingLayout({

@@ -23,13 +23,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://www.multica.ai"),
+  metadataBase: new URL("https://multica.zed.md"),
   title: {
-    default: "Multica — AI-Native Task Management",
+    default: "Multica — платформа для команд с AI-агентами",
     template: "%s | Multica",
   },
   description:
-    "Open-source platform that turns coding agents into real teammates. Assign tasks, track progress, compound skills.",
+    "Multica превращает coding agents в участников команды: задачи, рантаймы, навыки и контроль исполнения в одном интерфейсе.",
   icons: {
     icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
     shortcut: ["/favicon.svg"],
@@ -37,10 +37,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: "Multica",
-    locale: "en_US",
-  },
-  twitter: {
-    card: "summary_large_image",
+    locale: "ru_RU",
   },
   alternates: {
     canonical: "/",
@@ -58,14 +55,14 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="en"
+      lang="ru"
       suppressHydrationWarning
       className={cn("antialiased font-sans h-full", geist.variable, geistMono.variable)}
     >
       <body className="h-full overflow-hidden">
         <LocaleSync />
         <ThemeProvider>
-          <QueryProvider>
+          <QueryProvider showDevtools={process.env.NEXT_PUBLIC_DEVTOOLS === "true"}>
             <WebNavigationProvider>
               <AuthInitializer>
                 <WebWSProvider>{children}</WebWSProvider>

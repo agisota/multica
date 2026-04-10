@@ -16,6 +16,17 @@ export type {
   SetAgentSkillsRequest,
   RuntimeUsage,
   RuntimeHourlyActivity,
+  RuntimePolicy,
+  RuntimeBillingAccount,
+  RuntimeLease,
+  RuntimePlacement,
+  RuntimeBackend,
+  RuntimeExecutionMode,
+  PrivateRuntimeScope,
+  RuntimeLeaseState,
+  CreateRuntimeLeaseRequest,
+  UpdateRuntimePolicyRequest,
+  UpdateRuntimeBillingRequest,
   RuntimePing,
   RuntimePingStatus,
   RuntimeUpdate,
@@ -29,5 +40,6 @@ export type { IssueSubscriber } from "./subscriber";
 export type * from "./events";
 export type * from "./api";
 export type { Attachment } from "./attachment";
+export type { ChatSession, ChatMessage, SendChatMessageResponse } from "./chat";
 export type { StorageAdapter } from "./storage";
-export type { Project, ProjectStatus, CreateProjectRequest, UpdateProjectRequest, ListProjectsResponse } from "./project";
+export type { Project, ProjectStatus, ProjectPriority, CreateProjectRequest, UpdateProjectRequest, ListProjectsResponse } from "./project";

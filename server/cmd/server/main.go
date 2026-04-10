@@ -68,6 +68,8 @@ func main() {
 	// Start background sweeper to mark stale runtimes as offline.
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	go runRuntimeSweeper(sweepCtx, queries, bus)
+	managedCtx, managedCancel := context.WithCancel(context.Background())
+	go runManagedDispatcher(managedCtx, queries, hub, bus, "http://127.0.0.1:"+port)
 
 	// Graceful shutdown
 	go func() {
@@ -84,6 +86,7 @@ func main() {
 
 	slog.Info("shutting down server")
 	sweepCancel()
+	managedCancel()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

@@ -56,18 +56,29 @@ WHERE agent_id = $1
 ORDER BY created_at DESC;
 
 -- name: CreateAgentTask :one
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, trigger_comment_id)
-VALUES ($1, $2, $3, 'queued', $4, sqlc.narg(trigger_comment_id))
+INSERT INTO agent_task_queue (
+    agent_id,
+    runtime_id,
+    lease_id,
+    execution_backend,
+    issue_id,
+    status,
+    priority,
+    trigger_comment_id,
+    dispatch_state,
+    external_execution_id
+)
+VALUES ($1, $2, $3, $4, $5, 'queued', $6, sqlc.narg(trigger_comment_id), 'queued', sqlc.narg(external_execution_id))
 RETURNING *;
 
 -- name: CancelAgentTasksByIssue :exec
 UPDATE agent_task_queue
-SET status = 'cancelled'
+SET status = 'cancelled', dispatch_state = 'cancelled'
 WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running');
 
 -- name: CancelAgentTasksByAgent :exec
 UPDATE agent_task_queue
-SET status = 'cancelled'
+SET status = 'cancelled', dispatch_state = 'cancelled'
 WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running');
 
 -- name: GetAgentTask :one
@@ -79,16 +90,20 @@ WHERE id = $1;
 -- a task is only claimable when no other task for the same issue AND same agent is
 -- already dispatched or running. This allows different agents to work on the same
 -- issue in parallel while preventing a single agent from running duplicate tasks.
+-- Chat tasks (issue_id IS NULL) use chat_session_id for serialization instead.
 UPDATE agent_task_queue
-SET status = 'dispatched', dispatched_at = now()
+SET status = 'dispatched', dispatched_at = now(), dispatch_state = 'dispatched'
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
-    WHERE atq.agent_id = $1 AND atq.status = 'queued'
+    WHERE atq.agent_id = $1 AND atq.status = 'queued' AND atq.execution_backend = 'local'
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
-          WHERE active.issue_id = atq.issue_id
-            AND active.agent_id = atq.agent_id
+          WHERE active.agent_id = atq.agent_id
             AND active.status IN ('dispatched', 'running')
+            AND (
+              (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
+              OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
+            )
       )
     ORDER BY atq.priority DESC, atq.created_at ASC
     LIMIT 1
@@ -98,13 +113,13 @@ RETURNING *;
 
 -- name: StartAgentTask :one
 UPDATE agent_task_queue
-SET status = 'running', started_at = now()
+SET status = 'running', started_at = now(), dispatch_state = 'running'
 WHERE id = $1 AND status = 'dispatched'
 RETURNING *;
 
 -- name: CompleteAgentTask :one
 UPDATE agent_task_queue
-SET status = 'completed', completed_at = now(), result = $2, session_id = $3, work_dir = $4
+SET status = 'completed', completed_at = now(), result = $2, session_id = $3, work_dir = $4, dispatch_state = 'completed'
 WHERE id = $1 AND status = 'running'
 RETURNING *;
 
@@ -118,7 +133,7 @@ LIMIT 1;
 
 -- name: FailAgentTask :one
 UPDATE agent_task_queue
-SET status = 'failed', completed_at = now(), error = $2
+SET status = 'failed', completed_at = now(), error = $2, dispatch_state = 'failed'
 WHERE id = $1 AND status IN ('dispatched', 'running')
 RETURNING *;
 
@@ -127,14 +142,14 @@ RETURNING *;
 -- Handles cases where the daemon is alive but the task is orphaned
 -- (e.g. agent process hung, daemon failed to report completion).
 UPDATE agent_task_queue
-SET status = 'failed', completed_at = now(), error = 'task timed out'
+SET status = 'failed', completed_at = now(), error = 'task timed out', dispatch_state = 'failed'
 WHERE (status = 'dispatched' AND dispatched_at < now() - make_interval(secs => @dispatch_timeout_secs::double precision))
    OR (status = 'running' AND started_at < now() - make_interval(secs => @running_timeout_secs::double precision))
 RETURNING id, agent_id, issue_id;
 
 -- name: CancelAgentTask :one
 UPDATE agent_task_queue
-SET status = 'cancelled', completed_at = now()
+SET status = 'cancelled', completed_at = now(), dispatch_state = 'cancelled'
 WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
 
@@ -163,7 +178,9 @@ WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched');
 
 -- name: ListPendingTasksByRuntime :many
 SELECT * FROM agent_task_queue
-WHERE runtime_id = $1 AND status IN ('queued', 'dispatched')
+WHERE runtime_id = $1
+  AND execution_backend = 'local'
+  AND status IN ('queued', 'dispatched')
 ORDER BY priority DESC, created_at ASC;
 
 -- name: ListActiveTasksByIssue :many

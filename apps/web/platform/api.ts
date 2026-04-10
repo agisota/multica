@@ -2,7 +2,43 @@ import { ApiClient } from "@multica/core/api/client";
 import { setApiInstance } from "@multica/core/api";
 import { createLogger } from "@multica/core/logger";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
+function isLocalHostname(hostname: string) {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname.endsWith(".localhost")
+  );
+}
+
+function resolveApiBaseUrl() {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim() ?? "";
+  if (typeof window === "undefined") {
+    return configured;
+  }
+
+  if (!configured) {
+    return "";
+  }
+
+  try {
+    const url = new URL(configured, window.location.origin);
+    if (
+      isLocalHostname(window.location.hostname) &&
+      !isLocalHostname(url.hostname)
+    ) {
+      return "";
+    }
+    if (url.origin === window.location.origin) {
+      return "";
+    }
+  } catch {
+    return "";
+  }
+
+  return configured.replace(/\/$/, "");
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 export const api = new ApiClient(API_BASE_URL, {
   logger: createLogger("api"),

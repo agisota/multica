@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/link";
 import { useLocale } from "../i18n";
-import { GitHubMark, githubUrl } from "./shared";
 
 export function OpenSourceSection() {
   const { t } = useLocale();
@@ -11,7 +9,7 @@ export function OpenSourceSection() {
     <section id="open-source" className="bg-white text-[#0a0d12]">
       <div className="mx-auto max-w-[1320px] px-4 py-24 sm:px-6 sm:py-32 lg:px-8 lg:py-40">
         <div className="flex flex-col gap-16 lg:flex-row lg:items-start lg:gap-24">
-          {/* Left column — heading + CTA */}
+          {/* Left column — heading */}
           <div className="lg:w-[480px] lg:shrink-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0a0d12]/40">
               {t.openSource.label}
@@ -24,17 +22,6 @@ export function OpenSourceSection() {
             <p className="mt-6 max-w-[420px] text-[15px] leading-7 text-[#0a0d12]/60 sm:text-[16px]">
               {t.openSource.description}
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link
-                href={githubUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center gap-2.5 rounded-[12px] bg-[#0a0d12] px-5 py-3 text-[14px] font-semibold text-white transition-colors hover:bg-[#0a0d12]/88"
-              >
-                <GitHubMark className="size-4" />
-                {t.openSource.cta}
-              </Link>
-            </div>
           </div>
 
           {/* Right column — highlight grid */}

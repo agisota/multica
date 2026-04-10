@@ -7,8 +7,8 @@ import { useLocale } from "../i18n";
 import {
   ClaudeCodeLogo,
   CodexLogo,
-  GitHubMark,
-  githubUrl,
+  OpenClawLogo,
+  OpenCodeLogo,
   heroButtonClassName,
 } from "./shared";
 
@@ -37,17 +37,8 @@ export function LandingHero() {
             </p>
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <Link href={user ? "/issues" : "/login"} className={heroButtonClassName("solid")}>
+              <Link href={user ? "/issues" : "#contact"} className={heroButtonClassName("solid")}>
                 {user ? t.header.dashboard : t.hero.cta}
-              </Link>
-              <Link
-                href={githubUrl}
-                target="_blank"
-                rel="noreferrer"
-                className={heroButtonClassName("ghost")}
-              >
-                <GitHubMark className="size-4" />
-                GitHub
               </Link>
             </div>
           </div>
@@ -64,6 +55,14 @@ export function LandingHero() {
               <div className="flex items-center gap-2.5 text-white/80">
                 <CodexLogo className="size-5" />
                 <span className="text-[15px] font-medium">Codex</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-white/80">
+                <OpenClawLogo className="size-5" />
+                <span className="text-[15px] font-medium">OpenClaw</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-white/80">
+                <OpenCodeLogo className="size-5" />
+                <span className="text-[15px] font-medium">OpenCode</span>
               </div>
             </div>
           </div>

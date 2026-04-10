@@ -30,6 +30,7 @@ type Daemon struct {
 	client    *Client
 	repoCache *repocache.Cache
 	logger    *slog.Logger
+	authToken string
 
 	mu           sync.Mutex
 	workspaces   map[string]*workspaceState
@@ -98,7 +99,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.configWatchLoop(ctx)
 
 	// Start workspace sync loop to discover newly created workspaces.
-	go d.workspaceSyncLoop(ctx)
+	if !strings.HasPrefix(d.authToken, "mdt_") {
+		go d.workspaceSyncLoop(ctx)
+	}
 
 	go d.heartbeatLoop(ctx)
 	go d.usageScanLoop(ctx)
@@ -131,6 +134,13 @@ func (d *Daemon) deregisterRuntimes() {
 
 // resolveAuth loads the auth token from the CLI config for the active profile.
 func (d *Daemon) resolveAuth() error {
+	if token := strings.TrimSpace(os.Getenv("MULTICA_AUTH_TOKEN")); token != "" {
+		d.client.SetToken(token)
+		d.authToken = token
+		d.logger.Info("authenticated via environment token")
+		return nil
+	}
+
 	cfg, err := cli.LoadCLIConfigForProfile(d.cfg.Profile)
 	if err != nil {
 		return fmt.Errorf("load CLI config: %w", err)
@@ -144,23 +154,87 @@ func (d *Daemon) resolveAuth() error {
 		return fmt.Errorf("not authenticated: run %s first", loginHint)
 	}
 	d.client.SetToken(cfg.Token)
+	d.authToken = cfg.Token
 	d.logger.Info("authenticated")
 	return nil
 }
 
 // loadWatchedWorkspaces reads watched workspaces from CLI config and registers runtimes.
 func (d *Daemon) loadWatchedWorkspaces(ctx context.Context) error {
+	if workspaces := watchedWorkspacesFromEnv(); len(workspaces) > 0 {
+		return d.registerWatchedWorkspaces(ctx, workspaces)
+	}
+
 	cfg, err := cli.LoadCLIConfigForProfile(d.cfg.Profile)
 	if err != nil {
 		return fmt.Errorf("load CLI config: %w", err)
 	}
 
 	if len(cfg.WatchedWorkspaces) == 0 {
-		return fmt.Errorf("no watched workspaces configured: run 'multica workspace watch <id>' to add one")
+		return d.recoverWatchedWorkspaces(ctx, &cfg, fmt.Errorf("no watched workspaces configured: run 'multica workspace watch <id>' to add one"))
+	}
+
+	if err := d.registerWatchedWorkspaces(ctx, cfg.WatchedWorkspaces); err != nil {
+		return d.recoverWatchedWorkspaces(ctx, &cfg, err)
+	}
+
+	return nil
+}
+
+func (d *Daemon) recoverWatchedWorkspaces(ctx context.Context, cfg *cli.CLIConfig, registerErr error) error {
+	if strings.HasPrefix(d.authToken, "mdt_") {
+		return registerErr
+	}
+
+	apiCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	workspaces, err := d.client.ListWorkspaces(apiCtx)
+	if err != nil {
+		return registerErr
+	}
+	if len(workspaces) == 0 {
+		return registerErr
+	}
+
+	recovered := make([]cli.WatchedWorkspace, 0, len(workspaces))
+	for _, ws := range workspaces {
+		recovered = append(recovered, cli.WatchedWorkspace{ID: ws.ID, Name: ws.Name})
+	}
+	cfg.WatchedWorkspaces = recovered
+	if cfg.WorkspaceID == "" || !workspaceIDAvailable(workspaces, cfg.WorkspaceID) {
+		cfg.WorkspaceID = recovered[0].ID
+	}
+
+	if err := cli.SaveCLIConfigForProfile(*cfg, d.cfg.Profile); err != nil {
+		return registerErr
+	}
+
+	d.logger.Warn("recovered watched workspaces from API", "count", len(recovered), "workspace_id", cfg.WorkspaceID)
+
+	if err := d.registerWatchedWorkspaces(ctx, recovered); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func workspaceIDAvailable(workspaces []WorkspaceInfo, workspaceID string) bool {
+	for _, ws := range workspaces {
+		if ws.ID == workspaceID {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *Daemon) registerWatchedWorkspaces(ctx context.Context, watched []cli.WatchedWorkspace) error {
+	if len(watched) == 0 {
+		return fmt.Errorf("no watched workspaces configured")
 	}
 
 	var registered int
-	for _, ws := range cfg.WatchedWorkspaces {
+	for _, ws := range watched {
 		resp, err := d.registerRuntimesForWorkspace(ctx, ws.ID)
 		if err != nil {
 			d.logger.Error("failed to register runtimes", "workspace_id", ws.ID, "name", ws.Name, "error", err)
@@ -190,9 +264,32 @@ func (d *Daemon) loadWatchedWorkspaces(ctx context.Context) error {
 	}
 
 	if registered == 0 {
-		return fmt.Errorf("failed to register runtimes for any of the %d watched workspace(s)", len(cfg.WatchedWorkspaces))
+		return fmt.Errorf("failed to register runtimes for any of the %d watched workspace(s)", len(watched))
 	}
 	return nil
+}
+
+func watchedWorkspacesFromEnv() []cli.WatchedWorkspace {
+	raw := strings.TrimSpace(os.Getenv("MULTICA_WATCHED_WORKSPACES"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MULTICA_WORKSPACE_ID"))
+	}
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	workspaces := make([]cli.WatchedWorkspace, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		id := strings.TrimSpace(part)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		workspaces = append(workspaces, cli.WatchedWorkspace{ID: id, Name: id})
+	}
+	return workspaces
 }
 
 // allRuntimeIDs returns all runtime IDs across all watched workspaces.
@@ -728,7 +825,11 @@ func (d *Daemon) pollLoop(ctx context.Context) error {
 				continue
 			}
 			if task != nil {
-				d.logger.Info("task received", "task", shortID(task.ID), "issue", task.IssueID)
+				taskTarget := task.IssueID
+				if taskTarget == "" && task.ChatSessionID != "" {
+					taskTarget = "chat:" + shortID(task.ChatSessionID)
+				}
+				d.logger.Info("task received", "task", shortID(task.ID), "target", taskTarget)
 				wg.Add(1)
 				go func(t Task) {
 					defer wg.Done()
@@ -772,7 +873,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task) {
 	if task.Agent != nil {
 		agentName = task.Agent.Name
 	}
-	taskLog.Info("picked task", "issue", task.IssueID, "agent", agentName, "provider", provider)
+	if task.ChatSessionID != "" {
+		taskLog.Info("picked chat task", "chat_session", shortID(task.ChatSessionID), "agent", agentName, "provider", provider)
+	} else {
+		taskLog.Info("picked task", "issue", task.IssueID, "agent", agentName, "provider", provider)
+	}
 
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		taskLog.Error("start task failed", "error", err)
@@ -880,11 +985,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, taskLo
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
 		IssueID:           task.IssueID,
+		IssueTitle:        task.IssueTitle,
+		IssueDescription:  task.IssueDescription,
 		TriggerCommentID:  task.TriggerCommentID,
 		AgentName:         agentName,
 		AgentInstructions: instructions,
 		AgentSkills:       convertSkillsForEnv(skills),
 		Repos:             convertReposForEnv(task.Repos),
+		ChatSessionID:     task.ChatSessionID,
 	}
 
 	// Try to reuse the workdir from a previous task on the same (agent, issue) pair.

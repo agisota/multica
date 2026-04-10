@@ -5,6 +5,9 @@ export const runtimeKeys = {
   all: (wsId: string) => ["runtimes", wsId] as const,
   list: (wsId: string) => [...runtimeKeys.all(wsId), "list"] as const,
   listMine: (wsId: string) => [...runtimeKeys.all(wsId), "list", "mine"] as const,
+  policy: (wsId: string) => [...runtimeKeys.all(wsId), "policy"] as const,
+  billing: (wsId: string) => [...runtimeKeys.all(wsId), "billing"] as const,
+  leases: (wsId: string) => [...runtimeKeys.all(wsId), "leases"] as const,
   latestVersion: () => ["runtimes", "latestVersion"] as const,
 };
 
@@ -12,6 +15,27 @@ export function runtimeListOptions(wsId: string, owner?: "me") {
   return queryOptions({
     queryKey: owner === "me" ? runtimeKeys.listMine(wsId) : runtimeKeys.list(wsId),
     queryFn: () => api.listRuntimes({ workspace_id: wsId, owner }),
+  });
+}
+
+export function runtimePolicyOptions(wsId: string) {
+  return queryOptions({
+    queryKey: runtimeKeys.policy(wsId),
+    queryFn: () => api.getRuntimePolicy(),
+  });
+}
+
+export function runtimeBillingOptions(wsId: string) {
+  return queryOptions({
+    queryKey: runtimeKeys.billing(wsId),
+    queryFn: () => api.getRuntimeBilling(),
+  });
+}
+
+export function runtimeLeaseListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: runtimeKeys.leases(wsId),
+    queryFn: () => api.listRuntimeLeases(),
   });
 }
 

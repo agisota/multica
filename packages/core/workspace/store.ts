@@ -4,6 +4,10 @@ import type { ApiClient } from "../api/client";
 import { createLogger } from "../logger";
 
 const logger = createLogger("workspace-store");
+const forcedWorkspaceId =
+  typeof process !== "undefined"
+    ? process.env.NEXT_PUBLIC_DEFAULT_WORKSPACE_ID?.trim() ?? ""
+    : "";
 
 interface WorkspaceStoreOptions {
   storage?: StorageAdapter;
@@ -49,6 +53,9 @@ export function createWorkspaceStore(api: ApiClient, options?: WorkspaceStoreOpt
       set({ workspaces: wsList });
 
       const nextWorkspace =
+        (forcedWorkspaceId
+          ? wsList.find((item) => item.id === forcedWorkspaceId)
+          : null) ??
         (preferredWorkspaceId
           ? wsList.find((item) => item.id === preferredWorkspaceId)
           : null) ??

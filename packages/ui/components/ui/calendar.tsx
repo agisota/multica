@@ -12,6 +12,20 @@ import { cn } from "@multica/ui/lib/utils"
 import { Button, buttonVariants } from "@multica/ui/components/ui/button"
 import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react"
 
+function normalizeLocaleCode(localeCode?: string) {
+  if (!localeCode) {
+    return undefined
+  }
+
+  const normalized = localeCode.replace(/_/g, "-")
+
+  try {
+    return Intl.getCanonicalLocales(normalized)[0]
+  } catch {
+    return undefined
+  }
+}
+
 function Calendar({
   className,
   classNames,
@@ -26,6 +40,7 @@ function Calendar({
   buttonVariant?: React.ComponentProps<typeof Button>["variant"]
 }) {
   const defaultClassNames = getDefaultClassNames()
+  const localeCode = normalizeLocaleCode(locale?.code)
 
   return (
     <DayPicker
@@ -40,7 +55,7 @@ function Calendar({
       locale={locale}
       formatters={{
         formatMonthDropdown: (date) =>
-          date.toLocaleString(locale?.code, { month: "short" }),
+          date.toLocaleString(localeCode, { month: "short" }),
         ...formatters,
       }}
       classNames={{
@@ -162,7 +177,7 @@ function Calendar({
           )
         },
         DayButton: ({ ...props }) => (
-          <CalendarDayButton locale={locale} {...props} />
+          <CalendarDayButton localeCode={localeCode} {...props} />
         ),
         WeekNumber: ({ children, ...props }) => {
           return (
@@ -184,9 +199,9 @@ function CalendarDayButton({
   className,
   day,
   modifiers,
-  locale,
+  localeCode,
   ...props
-}: React.ComponentProps<typeof DayButton> & { locale?: Partial<Locale> }) {
+}: React.ComponentProps<typeof DayButton> & { localeCode?: string }) {
   const defaultClassNames = getDefaultClassNames()
 
   const ref = React.useRef<HTMLButtonElement>(null)
@@ -198,7 +213,7 @@ function CalendarDayButton({
     <Button
       variant="ghost"
       size="icon"
-      data-day={day.date.toLocaleDateString(locale?.code)}
+      data-day={day.date.toLocaleDateString(localeCode)}
       data-selected-single={
         modifiers.selected &&
         !modifiers.range_start &&

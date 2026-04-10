@@ -116,6 +116,14 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 
 	b.WriteString("# Task Assignment\n\n")
 	fmt.Fprintf(&b, "**Issue ID:** %s\n\n", ctx.IssueID)
+	if ctx.IssueTitle != "" {
+		fmt.Fprintf(&b, "**Issue title:** %s\n\n", ctx.IssueTitle)
+	}
+	if strings.TrimSpace(ctx.IssueDescription) != "" {
+		b.WriteString("## Issue Description\n\n")
+		b.WriteString(ctx.IssueDescription)
+		b.WriteString("\n\n")
+	}
 
 	if ctx.TriggerCommentID != "" {
 		b.WriteString("**Trigger:** Comment Reply\n")
@@ -125,7 +133,8 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	}
 
 	b.WriteString("## Quick Start\n\n")
-	fmt.Fprintf(&b, "Run `multica issue get %s --output json` to fetch the full issue details.\n\n", ctx.IssueID)
+	b.WriteString("Start from the embedded issue title/description in this file.\n")
+	fmt.Fprintf(&b, "Use `multica issue get %s --output json` only if you need extra platform metadata.\n\n", ctx.IssueID)
 
 	if len(ctx.AgentSkills) > 0 {
 		b.WriteString("## Agent Skills\n\n")

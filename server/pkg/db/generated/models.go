@@ -62,22 +62,27 @@ type AgentSkill struct {
 }
 
 type AgentTaskQueue struct {
-	ID               pgtype.UUID        `json:"id"`
-	AgentID          pgtype.UUID        `json:"agent_id"`
-	IssueID          pgtype.UUID        `json:"issue_id"`
-	Status           string             `json:"status"`
-	Priority         int32              `json:"priority"`
-	DispatchedAt     pgtype.Timestamptz `json:"dispatched_at"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
-	Result           []byte             `json:"result"`
-	Error            pgtype.Text        `json:"error"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	Context          []byte             `json:"context"`
-	RuntimeID        pgtype.UUID        `json:"runtime_id"`
-	SessionID        pgtype.Text        `json:"session_id"`
-	WorkDir          pgtype.Text        `json:"work_dir"`
-	TriggerCommentID pgtype.UUID        `json:"trigger_comment_id"`
+	ID                  pgtype.UUID        `json:"id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	Status              string             `json:"status"`
+	Priority            int32              `json:"priority"`
+	DispatchedAt        pgtype.Timestamptz `json:"dispatched_at"`
+	StartedAt           pgtype.Timestamptz `json:"started_at"`
+	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
+	Result              []byte             `json:"result"`
+	Error               pgtype.Text        `json:"error"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	Context             []byte             `json:"context"`
+	RuntimeID           pgtype.UUID        `json:"runtime_id"`
+	SessionID           pgtype.Text        `json:"session_id"`
+	WorkDir             pgtype.Text        `json:"work_dir"`
+	TriggerCommentID    pgtype.UUID        `json:"trigger_comment_id"`
+	ChatSessionID       pgtype.UUID        `json:"chat_session_id"`
+	LeaseID             pgtype.UUID        `json:"lease_id"`
+	ExecutionBackend    string             `json:"execution_backend"`
+	DispatchState       string             `json:"dispatch_state"`
+	ExternalExecutionID pgtype.Text        `json:"external_execution_id"`
 }
 
 type Attachment struct {
@@ -92,6 +97,28 @@ type Attachment struct {
 	ContentType  string             `json:"content_type"`
 	SizeBytes    int64              `json:"size_bytes"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type ChatMessage struct {
+	ID            pgtype.UUID        `json:"id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	Role          string             `json:"role"`
+	Content       string             `json:"content"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type ChatSession struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	CreatorID   pgtype.UUID        `json:"creator_id"`
+	Title       string             `json:"title"`
+	SessionID   pgtype.Text        `json:"session_id"`
+	WorkDir     pgtype.Text        `json:"work_dir"`
+	Status      string             `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Comment struct {
@@ -245,6 +272,80 @@ type Project struct {
 	LeadID      pgtype.UUID        `json:"lead_id"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Priority    string             `json:"priority"`
+}
+
+type RuntimeBillingAccount struct {
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	BillingEnabled         bool               `json:"billing_enabled"`
+	Currency               string             `json:"currency"`
+	HardLimitCents         int64              `json:"hard_limit_cents"`
+	SoftLimitCents         int64              `json:"soft_limit_cents"`
+	SharedHourlyRateCents  int32              `json:"shared_hourly_rate_cents"`
+	PrivateHourlyRateCents int32              `json:"private_hourly_rate_cents"`
+	TokenMarkupPercent     int32              `json:"token_markup_percent"`
+	Metadata               []byte             `json:"metadata"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RuntimeLease struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RuntimeID   pgtype.UUID        `json:"runtime_id"`
+	OwnerUserID pgtype.UUID        `json:"owner_user_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Name        string             `json:"name"`
+	Scope       string             `json:"scope"`
+	Placement   string             `json:"placement"`
+	Provider    string             `json:"provider"`
+	Backend     string             `json:"backend"`
+	State       string             `json:"state"`
+	ExternalRef pgtype.Text        `json:"external_ref"`
+	Config      []byte             `json:"config"`
+	Billing     []byte             `json:"billing"`
+	Metadata    []byte             `json:"metadata"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RuntimePolicy struct {
+	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
+	SharedPoolEnabled         bool               `json:"shared_pool_enabled"`
+	PrivateRuntimeScope       string             `json:"private_runtime_scope"`
+	DefaultRuntimePlacement   string             `json:"default_runtime_placement"`
+	DefaultProvider           string             `json:"default_provider"`
+	AllowDaytona              bool               `json:"allow_daytona"`
+	AllowModal                bool               `json:"allow_modal"`
+	AutoStopEnabled           bool               `json:"auto_stop_enabled"`
+	AutoDeleteEnabled         bool               `json:"auto_delete_enabled"`
+	IdleTtlMinutes            int32              `json:"idle_ttl_minutes"`
+	MaxPrivateRuntimesPerUser int32              `json:"max_private_runtimes_per_user"`
+	MaxSharedRuntimes         int32              `json:"max_shared_runtimes"`
+	Metadata                  []byte             `json:"metadata"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RuntimeTaskExecution struct {
+	ID                  pgtype.UUID        `json:"id"`
+	TaskID              pgtype.UUID        `json:"task_id"`
+	LeaseID             pgtype.UUID        `json:"lease_id"`
+	Backend             string             `json:"backend"`
+	ExternalExecutionID pgtype.Text        `json:"external_execution_id"`
+	Status              string             `json:"status"`
+	Logs                pgtype.Text        `json:"logs"`
+	Result              []byte             `json:"result"`
+	Error               pgtype.Text        `json:"error"`
+	Metadata            []byte             `json:"metadata"`
+	SubmittedAt         pgtype.Timestamptz `json:"submitted_at"`
+	StartedAt           pgtype.Timestamptz `json:"started_at"`
+	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
+	LastPolledAt        pgtype.Timestamptz `json:"last_polled_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RuntimeUsage struct {
@@ -259,6 +360,22 @@ type RuntimeUsage struct {
 	CacheWriteTokens int64              `json:"cache_write_tokens"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RuntimeUsageEvent struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	ExecutionID pgtype.UUID        `json:"execution_id"`
+	LeaseID     pgtype.UUID        `json:"lease_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Provider    string             `json:"provider"`
+	Backend     string             `json:"backend"`
+	EventType   string             `json:"event_type"`
+	AmountCents int64              `json:"amount_cents"`
+	Quantity    pgtype.Numeric     `json:"quantity"`
+	Metadata    []byte             `json:"metadata"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type Skill struct {

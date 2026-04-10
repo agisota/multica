@@ -609,6 +609,52 @@ func TestVerifyCodeCreatesWorkspace(t *testing.T) {
 	}
 }
 
+func TestVerifyCodeMasterCodeWithoutStoredCode(t *testing.T) {
+	t.Setenv("APP_ENV", "test")
+
+	const email = "master-code-test@multica.ai"
+	ctx := context.Background()
+
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM verification_code WHERE email = $1`, email)
+		user, err := testHandler.Queries.GetUserByEmail(ctx, email)
+		if err == nil {
+			workspaces, listErr := testHandler.Queries.ListWorkspaces(ctx, user.ID)
+			if listErr == nil {
+				for _, workspace := range workspaces {
+					_ = testHandler.Queries.DeleteWorkspace(ctx, workspace.ID)
+				}
+			}
+		}
+		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, email)
+	})
+
+	if _, err := testPool.Exec(ctx, `DELETE FROM verification_code WHERE email = $1`, email); err != nil {
+		t.Fatalf("cleanup verification code: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	var buf bytes.Buffer
+	json.NewEncoder(&buf).Encode(map[string]string{"email": email, "code": "888888"})
+	req := httptest.NewRequest("POST", "/auth/verify-code", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	testHandler.VerifyCode(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("VerifyCode (master code): expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp LoginResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Token == "" {
+		t.Fatal("VerifyCode (master code): expected non-empty token")
+	}
+	if resp.User.Email != email {
+		t.Fatalf("VerifyCode (master code): expected email %q, got %q", email, resp.User.Email)
+	}
+}
+
 func TestResolveActor(t *testing.T) {
 	ctx := context.Background()
 

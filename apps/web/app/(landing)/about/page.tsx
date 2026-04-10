@@ -2,13 +2,12 @@ import type { Metadata } from "next";
 import { AboutPageClient } from "@/features/landing/components/about-page-client";
 
 export const metadata: Metadata = {
-  title: "About",
+  title: "О платформе",
   description:
-    "Learn about Multica — multiplexed information and computing agent. An open-source AI-native task management platform.",
+    "Что такое Multica и зачем командам нужен управляемый слой для работы с coding agents.",
   openGraph: {
-    title: "About Multica",
-    description:
-      "The story behind Multica and why we're building AI-native task management.",
+    title: "О Multica",
+    description: "Идея и подход Multica к работе людей и AI-агентов.",
     url: "/about",
   },
   alternates: {

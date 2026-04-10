@@ -39,3 +39,15 @@
 [data-sonner-toast] [data-icon] {
   margin-top: 2.5px;
 }
+
+/* Turbopack can misparse these nested arbitrary Tailwind selectors in dev. */
+.dropdown-menu-checkbox-item--no-indicator > [data-slot="dropdown-menu-checkbox-item-indicator"] {
+  display: none;
+}
+
+[data-slot="sidebar-menu-button"] > span:last-child,
+[data-slot="sidebar-menu-sub-button"] > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -3,14 +3,13 @@ import { MulticaLanding } from "@/features/landing/components/multica-landing";
 
 export const metadata: Metadata = {
   title: {
-    absolute: "Multica — AI-Native Task Management",
+    absolute: "Multica — платформа для команд с AI-агентами",
   },
   description:
-    "Open-source platform that turns coding agents into real teammates. Assign tasks, track progress, compound skills.",
+    "Multica превращает coding agents в участников команды: задачи, рантаймы, навыки и контроль исполнения в одном интерфейсе.",
   openGraph: {
-    title: "Multica — AI-Native Task Management",
-    description:
-      "Manage your human + agent workforce in one place.",
+    title: "Multica — платформа для команд с AI-агентами",
+    description: "Управляйте людьми и AI-агентами в одном рабочем контуре.",
     url: "/",
   },
   alternates: {

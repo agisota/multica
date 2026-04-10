@@ -17,6 +17,7 @@ import { useUpdatableRuntimeIds } from "@multica/core/runtimes/hooks";
 import { useWSEvent } from "@multica/core/realtime";
 import { RuntimeList } from "./runtime-list";
 import { RuntimeDetail } from "./runtime-detail";
+import { RuntimeOrchestrationPanel } from "./runtime-orchestration-panel";
 
 type RuntimeFilter = "mine" | "all";
 
@@ -114,14 +115,21 @@ export default function RuntimesPage() {
       <ResizableHandle />
 
       <ResizablePanel id="detail" minSize="50%">
-        {selected ? (
-          <RuntimeDetail key={selected.id} runtime={selected} />
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-            <Server className="h-10 w-10 text-muted-foreground/30" />
-            <p className="mt-3 text-sm">Select a runtime to view details</p>
+        <div className="flex h-full flex-col">
+          <div className="border-b p-4">
+            <RuntimeOrchestrationPanel wsId={wsId} />
           </div>
-        )}
+          <div className="min-h-0 flex-1">
+            {selected ? (
+              <RuntimeDetail key={selected.id} runtime={selected} />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+                <Server className="h-10 w-10 text-muted-foreground/30" />
+                <p className="mt-3 text-sm">Select a runtime to view details</p>
+              </div>
+            )}
+          </div>
+        </div>
       </ResizablePanel>
     </ResizablePanelGroup>
   );

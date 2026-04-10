@@ -121,27 +121,22 @@ function CreateAgentDialog({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [selectedRuntimeId, setSelectedRuntimeId] = useState(runtimes[0]?.id ?? "");
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState("__auto__");
   const [visibility, setVisibility] = useState<AgentVisibility>("private");
   const [creating, setCreating] = useState(false);
   const [runtimeOpen, setRuntimeOpen] = useState(false);
-
-  useEffect(() => {
-    if (!selectedRuntimeId && runtimes[0]) {
-      setSelectedRuntimeId(runtimes[0].id);
-    }
-  }, [runtimes, selectedRuntimeId]);
-
+  const autoRuntime = selectedRuntimeId === "__auto__";
   const selectedRuntime = runtimes.find((d) => d.id === selectedRuntimeId) ?? null;
+  const onlineRuntimes = runtimes.filter((runtime) => runtime.status === "online");
 
   const handleSubmit = async () => {
-    if (!name.trim() || !selectedRuntime) return;
+    if (!name.trim()) return;
     setCreating(true);
     try {
       await onCreate({
         name: name.trim(),
         description: description.trim(),
-        runtime_id: selectedRuntime.id,
+        ...(autoRuntime ? {} : { runtime_id: selectedRuntime?.id }),
         visibility,
       });
       onClose();
@@ -226,10 +221,11 @@ function CreateAgentDialog({
             <Label className="text-xs text-muted-foreground">Runtime</Label>
             <Popover open={runtimeOpen} onOpenChange={setRuntimeOpen}>
               <PopoverTrigger
-                disabled={runtimes.length === 0}
                 className="flex w-full items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 mt-1.5 text-left text-sm transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
               >
-                {selectedRuntime?.runtime_mode === "cloud" ? (
+                {autoRuntime ? (
+                  <Settings className="h-4 w-4 shrink-0 text-muted-foreground" />
+                ) : selectedRuntime?.runtime_mode === "cloud" ? (
                   <Cloud className="h-4 w-4 shrink-0 text-muted-foreground" />
                 ) : (
                   <Monitor className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -237,21 +233,50 @@ function CreateAgentDialog({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate font-medium">
-                      {selectedRuntime?.name ?? "No runtime available"}
+                      {autoRuntime ? "Auto-select runtime" : (selectedRuntime?.name ?? "No runtime available")}
                     </span>
-                    {selectedRuntime?.runtime_mode === "cloud" && (
+                    {autoRuntime && (
+                      <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
+                        Recommended
+                      </span>
+                    )}
+                    {!autoRuntime && selectedRuntime?.runtime_mode === "cloud" && (
                       <span className="shrink-0 rounded bg-info/10 px-1.5 py-0.5 text-xs font-medium text-info">
                         Cloud
                       </span>
                     )}
                   </div>
                   <div className="truncate text-xs text-muted-foreground">
-                    {selectedRuntime?.device_info ?? "Register a runtime before creating an agent"}
+                    {autoRuntime
+                      ? `${onlineRuntimes.length} online runtime${onlineRuntimes.length === 1 ? "" : "s"} available. Backend will pick the best match.`
+                      : (selectedRuntime?.device_info ?? "Register a runtime before creating an agent")}
                   </div>
                 </div>
                 <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${runtimeOpen ? "rotate-180" : ""}`} />
               </PopoverTrigger>
               <PopoverContent align="start" className="w-[var(--anchor-width)] p-1 max-h-60 overflow-y-auto">
+                <button
+                  onClick={() => {
+                    setSelectedRuntimeId("__auto__");
+                    setRuntimeOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
+                    autoRuntime ? "bg-accent" : "hover:bg-accent/50"
+                  }`}
+                >
+                  <Settings className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium">Auto-select runtime</span>
+                      <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
+                        Recommended
+                      </span>
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      Prefer private runtime for you, otherwise use the shared pool.
+                    </div>
+                  </div>
+                </button>
                 {runtimes.map((device) => (
                   <button
                     key={device.id}
@@ -297,7 +322,7 @@ function CreateAgentDialog({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={creating || !name.trim() || !selectedRuntime}
+            disabled={creating || !name.trim() || (!autoRuntime && !selectedRuntime)}
           >
             {creating ? "Creating..." : "Create"}
           </Button>

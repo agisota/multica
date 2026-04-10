@@ -2,6 +2,8 @@ import { test, expect } from "@playwright/test";
 import { loginAsDefault, createTestApi } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
+const issuesViewToggle = 'button:has(svg.lucide-columns3), button:has(svg.lucide-list)';
+
 test.describe("Issues", () => {
   let api: TestApiClient;
 
@@ -15,7 +17,7 @@ test.describe("Issues", () => {
   });
 
   test("issues page loads with board view", async ({ page }) => {
-    await expect(page.locator("text=All Issues")).toBeVisible();
+    await expect(page.locator("button:has(svg.lucide-columns3)")).toBeVisible();
 
     // Board columns should be visible
     await expect(page.locator("text=Backlog")).toBeVisible();
@@ -24,23 +26,27 @@ test.describe("Issues", () => {
   });
 
   test("can switch between board and list view", async ({ page }) => {
-    await expect(page.locator("text=All Issues")).toBeVisible();
+    await expect(page.locator("button:has(svg.lucide-columns3)")).toBeVisible();
 
     // Switch to list view
-    await page.click("text=List");
-    await expect(page.locator("text=All Issues")).toBeVisible();
+    await page.locator(issuesViewToggle).click();
+    await page.getByRole("menuitem", { name: "List" }).click();
+    await expect(page.locator("button:has(svg.lucide-list)")).toBeVisible();
 
     // Switch back to board view
-    await page.click("text=Board");
-    await expect(page.locator("text=Backlog")).toBeVisible();
+    await page.locator(issuesViewToggle).click();
+    await page.getByRole("menuitem", { name: "Board" }).click();
+    await expect(page.locator("button:has(svg.lucide-columns3)")).toBeVisible();
   });
 
   test("can create a new issue", async ({ page }) => {
-    await page.click("text=New Issue");
+    await page.getByRole("button", { name: "New Issue" }).click();
+    const dialog = page.getByRole("dialog", { name: "New Issue" });
+    await expect(dialog).toBeVisible();
 
     const title = "E2E Created " + Date.now();
-    await page.fill('input[placeholder="Issue title..."]', title);
-    await page.click("text=Create");
+    await dialog.getByRole("textbox", { name: "Issue title" }).fill(title);
+    await dialog.getByRole("button", { name: "Create Issue" }).click();
 
     // New issue should appear on the page
     await expect(page.locator(`text=${title}`).first()).toBeVisible({
@@ -54,10 +60,10 @@ test.describe("Issues", () => {
 
     // Reload to see the new issue
     await page.reload();
-    await expect(page.locator("text=All Issues")).toBeVisible();
+    await expect(page.locator("button:has(svg.lucide-columns3)")).toBeVisible();
 
     // Navigate to the issue detail
-    const issueLink = page.locator(`a[href="/issues/${issue.id}"]`);
+    const issueLink = page.locator(`main a[href="/issues/${issue.id}"]`);
     await expect(issueLink).toBeVisible({ timeout: 5000 });
     await issueLink.click();
 
@@ -72,17 +78,14 @@ test.describe("Issues", () => {
   });
 
   test("can cancel issue creation", async ({ page }) => {
-    await page.click("text=New Issue");
+    await page.getByRole("button", { name: "New Issue" }).click();
 
-    await expect(
-      page.locator('input[placeholder="Issue title..."]'),
-    ).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: "New Issue" });
+    await expect(dialog.getByRole("textbox", { name: "Issue title" })).toBeVisible();
 
-    await page.click("text=Cancel");
+    await page.keyboard.press("Escape");
 
-    await expect(
-      page.locator('input[placeholder="Issue title..."]'),
-    ).not.toBeVisible();
-    await expect(page.locator("text=New Issue")).toBeVisible();
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "New Issue" })).toBeVisible();
   });
 });

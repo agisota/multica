@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countAgentsByRuntime = `-- name: CountAgentsByRuntime :one
-SELECT count(*) FROM agent WHERE runtime_id = $1
+const countActiveAgentsByRuntime = `-- name: CountActiveAgentsByRuntime :one
+SELECT count(*) FROM agent WHERE runtime_id = $1 AND archived_at IS NULL
 `
 
-func (q *Queries) CountAgentsByRuntime(ctx context.Context, runtimeID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countAgentsByRuntime, runtimeID)
+func (q *Queries) CountActiveAgentsByRuntime(ctx context.Context, runtimeID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAgentsByRuntime, runtimeID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -31,10 +31,20 @@ func (q *Queries) DeleteAgentRuntime(ctx context.Context, id pgtype.UUID) error 
 	return err
 }
 
+const deleteArchivedAgentsByRuntime = `-- name: DeleteArchivedAgentsByRuntime :exec
+DELETE FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL
+`
+
+func (q *Queries) DeleteArchivedAgentsByRuntime(ctx context.Context, runtimeID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteArchivedAgentsByRuntime, runtimeID)
+	return err
+}
+
 const failTasksForOfflineRuntimes = `-- name: FailTasksForOfflineRuntimes :many
 UPDATE agent_task_queue
-SET status = 'failed', completed_at = now(), error = 'runtime went offline'
+SET status = 'failed', completed_at = now(), error = 'runtime went offline', dispatch_state = 'failed'
 WHERE status IN ('dispatched', 'running')
+  AND execution_backend = 'local'
   AND runtime_id IN (
     SELECT id FROM agent_runtime WHERE status = 'offline'
   )

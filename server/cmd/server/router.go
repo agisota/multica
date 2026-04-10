@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -75,8 +76,9 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 
 	// WebSocket
 	mc := &membershipChecker{queries: queries}
+	pr := &patResolver{queries: queries}
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
-		realtime.HandleWebSocket(hub, mc, w, r)
+		realtime.HandleWebSocket(hub, mc, pr, w, r)
 	})
 
 	// Auth (public)
@@ -244,6 +246,20 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 			// Runtimes
 			r.Route("/api/runtimes", func(r chi.Router) {
 				r.Get("/", h.ListAgentRuntimes)
+				r.Get("/policy", h.GetRuntimePolicy)
+				r.Put("/policy", h.UpdateRuntimePolicy)
+				r.Get("/billing", h.GetRuntimeBilling)
+				r.Put("/billing", h.UpdateRuntimeBilling)
+				r.Route("/leases", func(r chi.Router) {
+					r.Get("/", h.ListRuntimeLeases)
+					r.Post("/", h.CreateRuntimeLease)
+					r.Route("/{leaseId}", func(r chi.Router) {
+						r.Get("/", h.GetRuntimeLease)
+						r.Post("/start", h.StartRuntimeLease)
+						r.Post("/stop", h.StopRuntimeLease)
+						r.Delete("/", h.DeleteRuntimeLease)
+					})
+				})
 				r.Route("/{runtimeId}", func(r chi.Router) {
 					r.Get("/usage", h.GetRuntimeUsage)
 					r.Get("/activity", h.GetRuntimeTaskActivity)
@@ -252,6 +268,20 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Post("/update", h.InitiateUpdate)
 					r.Get("/update/{updateId}", h.GetUpdate)
 					r.Delete("/", h.DeleteAgentRuntime)
+				})
+			})
+
+			// Tasks (user-facing, with ownership check)
+			r.Post("/api/tasks/{taskId}/cancel", h.CancelTaskByUser)
+
+			r.Route("/api/chat/sessions", func(r chi.Router) {
+				r.Post("/", h.CreateChatSession)
+				r.Get("/", h.ListChatSessions)
+				r.Route("/{sessionId}", func(r chi.Router) {
+					r.Get("/", h.GetChatSession)
+					r.Delete("/", h.ArchiveChatSession)
+					r.Post("/messages", h.SendChatMessage)
+					r.Get("/messages", h.ListChatMessages)
 				})
 			})
 
@@ -283,6 +313,22 @@ func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID s
 		WorkspaceID: parseUUID(workspaceID),
 	})
 	return err == nil
+}
+
+// patResolver implements realtime.PATResolver using database queries.
+type patResolver struct {
+	queries *db.Queries
+}
+
+func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, bool) {
+	hash := auth.HashToken(token)
+	pat, err := pr.queries.GetPersonalAccessTokenByHash(ctx, hash)
+	if err != nil {
+		return "", false
+	}
+	// Best-effort: update last_used_at
+	go pr.queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+	return util.UUIDToString(pat.UserID), true
 }
 
 func parseUUID(s string) pgtype.UUID {

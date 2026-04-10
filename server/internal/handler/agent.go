@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -73,24 +74,26 @@ type RepoData struct {
 }
 
 type AgentTaskResponse struct {
-	ID             string         `json:"id"`
-	AgentID        string         `json:"agent_id"`
-	RuntimeID      string         `json:"runtime_id"`
-	IssueID        string         `json:"issue_id"`
-	WorkspaceID    string         `json:"workspace_id"`
-	Status         string         `json:"status"`
-	Priority       int32          `json:"priority"`
-	DispatchedAt   *string        `json:"dispatched_at"`
-	StartedAt      *string        `json:"started_at"`
-	CompletedAt    *string        `json:"completed_at"`
-	Result         any            `json:"result"`
-	Error          *string        `json:"error"`
-	Agent          *TaskAgentData `json:"agent,omitempty"`
-	Repos          []RepoData     `json:"repos,omitempty"`
-	CreatedAt      string         `json:"created_at"`
-	PriorSessionID   string         `json:"prior_session_id,omitempty"`    // session ID from a previous task on same issue
+	ID               string         `json:"id"`
+	AgentID          string         `json:"agent_id"`
+	RuntimeID        string         `json:"runtime_id"`
+	IssueID          string         `json:"issue_id"`
+	WorkspaceID      string         `json:"workspace_id"`
+	Status           string         `json:"status"`
+	Priority         int32          `json:"priority"`
+	DispatchedAt     *string        `json:"dispatched_at"`
+	StartedAt        *string        `json:"started_at"`
+	CompletedAt      *string        `json:"completed_at"`
+	Result           any            `json:"result"`
+	Error            *string        `json:"error"`
+	Agent            *TaskAgentData `json:"agent,omitempty"`
+	Repos            []RepoData     `json:"repos,omitempty"`
+	CreatedAt        string         `json:"created_at"`
+	PriorSessionID   string         `json:"prior_session_id,omitempty"`   // session ID from a previous task on same issue
 	PriorWorkDir     string         `json:"prior_work_dir,omitempty"`     // work_dir from a previous task on same issue
 	TriggerCommentID *string        `json:"trigger_comment_id,omitempty"` // comment that triggered this task
+	ChatSessionID    string         `json:"chat_session_id,omitempty"`    // non-empty for chat tasks
+	ChatMessage      string         `json:"chat_message,omitempty"`       // user message for chat tasks
 }
 
 // TaskAgentData holds agent info included in claim responses so the daemon
@@ -108,16 +111,16 @@ func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
 		json.Unmarshal(t.Result, &result)
 	}
 	return AgentTaskResponse{
-		ID:           uuidToString(t.ID),
-		AgentID:      uuidToString(t.AgentID),
-		RuntimeID:    uuidToString(t.RuntimeID),
-		IssueID:      uuidToString(t.IssueID),
-		Status:       t.Status,
-		Priority:     t.Priority,
-		DispatchedAt: timestampToPtr(t.DispatchedAt),
-		StartedAt:    timestampToPtr(t.StartedAt),
-		CompletedAt:  timestampToPtr(t.CompletedAt),
-		Result:       result,
+		ID:               uuidToString(t.ID),
+		AgentID:          uuidToString(t.AgentID),
+		RuntimeID:        uuidToString(t.RuntimeID),
+		IssueID:          uuidToString(t.IssueID),
+		Status:           t.Status,
+		Priority:         t.Priority,
+		DispatchedAt:     timestampToPtr(t.DispatchedAt),
+		StartedAt:        timestampToPtr(t.StartedAt),
+		CompletedAt:      timestampToPtr(t.CompletedAt),
+		Result:           result,
 		Error:            textToPtr(t.Error),
 		CreatedAt:        timestampToString(t.CreatedAt),
 		TriggerCommentID: uuidToPtr(t.TriggerCommentID),
@@ -197,7 +200,7 @@ type CreateAgentRequest struct {
 	Description        string  `json:"description"`
 	Instructions       string  `json:"instructions"`
 	AvatarURL          *string `json:"avatar_url"`
-	RuntimeID          string  `json:"runtime_id"`
+	RuntimeID          *string `json:"runtime_id"`
 	RuntimeConfig      any     `json:"runtime_config"`
 	Visibility         string  `json:"visibility"`
 	MaxConcurrentTasks int32   `json:"max_concurrent_tasks"`
@@ -221,10 +224,6 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if req.RuntimeID == "" {
-		writeError(w, http.StatusBadRequest, "runtime_id is required")
-		return
-	}
 	if req.Visibility == "" {
 		req.Visibility = "private"
 	}
@@ -232,18 +231,26 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		req.MaxConcurrentTasks = 6
 	}
 
-	runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
-		ID:          parseUUID(req.RuntimeID),
-		WorkspaceID: parseUUID(workspaceID),
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid runtime_id")
-		return
-	}
-
 	rc, _ := json.Marshal(req.RuntimeConfig)
 	if req.RuntimeConfig == nil {
 		rc = []byte("{}")
+	}
+
+	runtimeMode := "cloud"
+	runtimeID := pgtype.UUID{}
+	var runtime db.AgentRuntime
+	var err error
+	if req.RuntimeID != nil && strings.TrimSpace(*req.RuntimeID) != "" {
+		runtime, err = h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
+			ID:          parseUUID(strings.TrimSpace(*req.RuntimeID)),
+			WorkspaceID: parseUUID(workspaceID),
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid runtime_id")
+			return
+		}
+		runtimeMode = runtime.RuntimeMode
+		runtimeID = runtime.ID
 	}
 
 	agent, err := h.Queries.CreateAgent(r.Context(), db.CreateAgentParams{
@@ -252,9 +259,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		Description:        req.Description,
 		Instructions:       req.Instructions,
 		AvatarUrl:          ptrToText(req.AvatarURL),
-		RuntimeMode:        runtime.RuntimeMode,
+		RuntimeMode:        runtimeMode,
 		RuntimeConfig:      rc,
-		RuntimeID:          runtime.ID,
+		RuntimeID:          runtimeID,
 		Visibility:         req.Visibility,
 		MaxConcurrentTasks: req.MaxConcurrentTasks,
 		OwnerID:            parseUUID(ownerID),
@@ -266,7 +273,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("agent created", append(logger.RequestAttrs(r), "agent_id", uuidToString(agent.ID), "name", agent.Name, "workspace_id", workspaceID)...)
 
-	if runtime.Status == "online" {
+	if runtime.ID.Valid && runtime.Status == "online" {
 		h.TaskService.ReconcileAgentStatus(r.Context(), agent.ID)
 		agent, _ = h.Queries.GetAgent(r.Context(), agent.ID)
 	}
@@ -276,8 +283,6 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": resp})
 	writeJSON(w, http.StatusCreated, resp)
 }
-
-
 
 type UpdateAgentRequest struct {
 	Name               *string `json:"name"`
@@ -345,16 +350,21 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.RuntimeConfig = rc
 	}
 	if req.RuntimeID != nil {
-		runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
-			ID:          parseUUID(*req.RuntimeID),
-			WorkspaceID: agent.WorkspaceID,
-		})
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid runtime_id")
-			return
+		if strings.TrimSpace(*req.RuntimeID) == "" {
+			params.RuntimeID = pgtype.UUID{}
+			params.RuntimeMode = pgtype.Text{String: "cloud", Valid: true}
+		} else {
+			runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
+				ID:          parseUUID(strings.TrimSpace(*req.RuntimeID)),
+				WorkspaceID: agent.WorkspaceID,
+			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid runtime_id")
+				return
+			}
+			params.RuntimeID = runtime.ID
+			params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 		}
-		params.RuntimeID = runtime.ID
-		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 	}
 	if req.Visibility != nil {
 		params.Visibility = pgtype.Text{String: *req.Visibility, Valid: true}

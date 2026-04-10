@@ -6,6 +6,7 @@ import { resolve } from "path";
 config({ path: resolve(__dirname, "../../.env") });
 
 const remoteApiUrl = process.env.REMOTE_API_URL || "http://localhost:8080";
+const distDir = process.env.NEXT_DIST_DIR?.trim() || ".next";
 
 // Parse hostnames from CORS_ALLOWED_ORIGINS so that Next.js dev server
 // allows cross-origin HMR / webpack requests (e.g. from Tailscale IPs).
@@ -23,6 +24,7 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
+  distDir,
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
     ? { allowedDevOrigins }
     : {}),

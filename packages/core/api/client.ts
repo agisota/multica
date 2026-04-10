@@ -31,11 +31,20 @@ import type {
   CreatePersonalAccessTokenResponse,
   RuntimeUsage,
   RuntimeHourlyActivity,
+  RuntimePolicy,
+  RuntimeBillingAccount,
+  RuntimeLease,
+  CreateRuntimeLeaseRequest,
+  UpdateRuntimePolicyRequest,
+  UpdateRuntimeBillingRequest,
   RuntimePing,
   RuntimeUpdate,
   TimelineEntry,
   TaskMessagePayload,
   Attachment,
+  ChatSession,
+  ChatMessage,
+  SendChatMessageResponse,
   Project,
   CreateProjectRequest,
   UpdateProjectRequest,
@@ -98,7 +107,8 @@ export class ApiClient {
   }
 
   private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
-    const rid = crypto.randomUUID().slice(0, 8);
+    const _uuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const rid = _uuid.slice(0, 8);
     const start = Date.now();
     const method = init?.method ?? "GET";
 
@@ -364,6 +374,59 @@ export class ApiClient {
     await this.fetch(`/api/runtimes/${runtimeId}`, { method: "DELETE" });
   }
 
+  async getRuntimePolicy(): Promise<RuntimePolicy> {
+    return this.fetch("/api/runtimes/policy");
+  }
+
+  async updateRuntimePolicy(data: UpdateRuntimePolicyRequest): Promise<RuntimePolicy> {
+    return this.fetch("/api/runtimes/policy", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getRuntimeBilling(): Promise<RuntimeBillingAccount> {
+    return this.fetch("/api/runtimes/billing");
+  }
+
+  async updateRuntimeBilling(data: UpdateRuntimeBillingRequest): Promise<RuntimeBillingAccount> {
+    return this.fetch("/api/runtimes/billing", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listRuntimeLeases(): Promise<RuntimeLease[]> {
+    return this.fetch("/api/runtimes/leases");
+  }
+
+  async getRuntimeLease(leaseId: string): Promise<RuntimeLease> {
+    return this.fetch(`/api/runtimes/leases/${leaseId}`);
+  }
+
+  async createRuntimeLease(data: CreateRuntimeLeaseRequest): Promise<RuntimeLease> {
+    return this.fetch("/api/runtimes/leases", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async startRuntimeLease(leaseId: string): Promise<RuntimeLease> {
+    return this.fetch(`/api/runtimes/leases/${leaseId}/start`, {
+      method: "POST",
+    });
+  }
+
+  async stopRuntimeLease(leaseId: string): Promise<RuntimeLease> {
+    return this.fetch(`/api/runtimes/leases/${leaseId}/stop`, {
+      method: "POST",
+    });
+  }
+
+  async deleteRuntimeLease(leaseId: string): Promise<void> {
+    await this.fetch(`/api/runtimes/leases/${leaseId}`, { method: "DELETE" });
+  }
+
   async getRuntimeUsage(runtimeId: string, params?: { days?: number }): Promise<RuntimeUsage[]> {
     const search = new URLSearchParams();
     if (params?.days) search.set("days", String(params.days));
@@ -582,7 +645,8 @@ export class ApiClient {
     if (opts?.issueId) formData.append("issue_id", opts.issueId);
     if (opts?.commentId) formData.append("comment_id", opts.commentId);
 
-    const rid = crypto.randomUUID().slice(0, 8);
+    const _uuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const rid = _uuid.slice(0, 8);
     const start = Date.now();
     this.logger.info("→ POST /api/upload-file", { rid });
 
@@ -602,6 +666,42 @@ export class ApiClient {
 
     this.logger.info(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms` });
     return res.json() as Promise<Attachment>;
+  }
+
+  // Chat Sessions
+  async listChatSessions(params?: { status?: string }): Promise<ChatSession[]> {
+    const query = params?.status ? `?status=${params.status}` : "";
+    return this.fetch(`/api/chat/sessions${query}`);
+  }
+
+  async getChatSession(id: string): Promise<ChatSession> {
+    return this.fetch(`/api/chat/sessions/${id}`);
+  }
+
+  async createChatSession(data: { agent_id: string; title?: string }): Promise<ChatSession> {
+    return this.fetch("/api/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async archiveChatSession(id: string): Promise<void> {
+    await this.fetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
+  }
+
+  async listChatMessages(sessionId: string): Promise<ChatMessage[]> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/messages`);
+  }
+
+  async sendChatMessage(sessionId: string, content: string): Promise<SendChatMessageResponse> {
+    return this.fetch(`/api/chat/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  }
+
+  async cancelTaskById(taskId: string): Promise<void> {
+    await this.fetch(`/api/tasks/${taskId}/cancel`, { method: "POST" });
   }
 
   async listAttachments(issueId: string): Promise<Attachment[]> {

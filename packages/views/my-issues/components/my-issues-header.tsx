@@ -55,7 +55,7 @@ import { myIssuesViewStore, type MyIssuesScope } from "../stores/my-issues-view-
 // ---------------------------------------------------------------------------
 
 const FILTER_ITEM_CLASS =
-  "group/fitem pr-1.5! [&>[data-slot=dropdown-menu-checkbox-item-indicator]]:hidden";
+  "group/fitem pr-1.5! dropdown-menu-checkbox-item--no-indicator";
 
 function HoverCheck({ checked }: { checked: boolean }) {
   return (

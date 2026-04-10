@@ -111,7 +111,69 @@ func defaultWorkspaceSlug(user db.User) string {
 	return base
 }
 
+func sharedWorkspaceConfig() (workspaceID, workspaceSlug string) {
+	return strings.TrimSpace(os.Getenv("MULTICA_SHARED_WORKSPACE_ID")), strings.TrimSpace(os.Getenv("MULTICA_SHARED_WORKSPACE_SLUG"))
+}
+
+func (h *Handler) ensureSharedWorkspaceMembership(ctx context.Context, user db.User) (bool, error) {
+	workspaceID, workspaceSlug := sharedWorkspaceConfig()
+	if workspaceID == "" && workspaceSlug == "" {
+		return false, nil
+	}
+
+	var workspace db.Workspace
+	var err error
+	switch {
+	case workspaceID != "":
+		workspace, err = h.Queries.GetWorkspace(ctx, parseUUID(workspaceID))
+	case workspaceSlug != "":
+		workspace, err = h.Queries.GetWorkspaceBySlug(ctx, workspaceSlug)
+	}
+	if err != nil {
+		if isNotFound(err) {
+			slog.Warn("shared workspace config not found; falling back to personal workspace provisioning", "workspace_id", workspaceID, "workspace_slug", workspaceSlug)
+			return false, nil
+		}
+		return false, err
+	}
+
+	if _, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID: user.ID, WorkspaceID: workspace.ID,
+	}); err == nil {
+		member, memberErr := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+			UserID: user.ID, WorkspaceID: workspace.ID,
+		})
+		if memberErr == nil && member.Role != "owner" {
+			if _, err := h.Queries.UpdateMemberRole(ctx, db.UpdateMemberRoleParams{
+				ID:   member.ID,
+				Role: "owner",
+			}); err != nil {
+				return false, err
+			}
+		}
+		return true, nil
+	} else if !isNotFound(err) {
+		return false, err
+	}
+
+	if _, err := h.Queries.CreateMember(ctx, db.CreateMemberParams{
+		WorkspaceID: workspace.ID,
+		UserID:      user.ID,
+		Role:        "owner",
+	}); err != nil && !isUniqueViolation(err) {
+		return false, err
+	}
+
+	return true, nil
+}
+
 func (h *Handler) ensureUserWorkspace(ctx context.Context, user db.User) error {
+	if joinedShared, err := h.ensureSharedWorkspaceMembership(ctx, user); err != nil {
+		return err
+	} else if joinedShared {
+		return nil
+	}
+
 	workspaces, err := h.Queries.ListWorkspaces(ctx, user.ID)
 	if err != nil {
 		return err
@@ -266,22 +328,28 @@ func (h *Handler) VerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbCode, err := h.Queries.GetLatestVerificationCode(r.Context(), email)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid or expired code")
-		return
-	}
-
 	isMasterCode := code == "888888" && os.Getenv("APP_ENV") != "production"
-	if !isMasterCode && subtle.ConstantTimeCompare([]byte(code), []byte(dbCode.Code)) != 1 {
-		_ = h.Queries.IncrementVerificationCodeAttempts(r.Context(), dbCode.ID)
-		writeError(w, http.StatusBadRequest, "invalid or expired code")
-		return
+	var dbCode db.VerificationCode
+	if !isMasterCode {
+		var err error
+		dbCode, err = h.Queries.GetLatestVerificationCode(r.Context(), email)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid or expired code")
+			return
+		}
+
+		if subtle.ConstantTimeCompare([]byte(code), []byte(dbCode.Code)) != 1 {
+			_ = h.Queries.IncrementVerificationCodeAttempts(r.Context(), dbCode.ID)
+			writeError(w, http.StatusBadRequest, "invalid or expired code")
+			return
+		}
 	}
 
-	if err := h.Queries.MarkVerificationCodeUsed(r.Context(), dbCode.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to verify code")
-		return
+	if dbCode.ID.Valid {
+		if err := h.Queries.MarkVerificationCodeUsed(r.Context(), dbCode.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to verify code")
+			return
+		}
 	}
 
 	user, err := h.findOrCreateUser(r.Context(), email)

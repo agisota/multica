@@ -4,10 +4,7 @@
  * Uses raw fetch so E2E tests have zero build-time coupling to the web app.
  */
 
-import pg from "pg";
-
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? `http://localhost:${process.env.PORT ?? "8080"}`;
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
 
 interface TestWorkspace {
   id: string;
@@ -20,54 +17,33 @@ export class TestApiClient {
   private workspaceId: string | null = null;
   private createdIssueIds: string[] = [];
 
+  setAuth(token: string, workspaceId?: string | null) {
+    this.token = token;
+    this.workspaceId = workspaceId ?? null;
+  }
+
   async login(email: string, name: string) {
-    // Step 1: Send verification code
-    const sendRes = await fetch(`${API_BASE}/auth/send-code`, {
+    const verifyRes = await fetch(`${API_BASE}/auth/verify-code`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, code: "888888" }),
     });
-    if (!sendRes.ok) {
-      // Rate limited — code already sent recently, read it from DB
-      if (sendRes.status !== 429) {
-        throw new Error(`send-code failed: ${sendRes.status}`);
-      }
+
+    const data = await verifyRes.json();
+    if (!verifyRes.ok) {
+      throw new Error(`verify-code failed: ${verifyRes.status} ${JSON.stringify(data)}`);
     }
 
-    // Step 2: Read code from database
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const result = await client.query(
-        "SELECT code FROM verification_code WHERE email = $1 AND used = FALSE AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
-        [email]
-      );
-      if (result.rows.length === 0) {
-        throw new Error(`No verification code found for ${email}`);
-      }
-      const code = result.rows[0].code;
+    this.token = data.token;
 
-      // Step 3: Verify code to get JWT
-      const verifyRes = await fetch(`${API_BASE}/auth/verify-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
+    if (name && data.user?.name !== name) {
+      await this.authedFetch("/api/me", {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
       });
-      const data = await verifyRes.json();
-      this.token = data.token;
-
-      // Update user name if needed
-      if (name && data.user?.name !== name) {
-        await this.authedFetch("/api/me", {
-          method: "PATCH",
-          body: JSON.stringify({ name }),
-        });
-      }
-
-      return data;
-    } finally {
-      await client.end();
     }
+
+    return data;
   }
 
   async getWorkspaces(): Promise<TestWorkspace[]> {
@@ -135,6 +111,10 @@ export class TestApiClient {
 
   getToken() {
     return this.token;
+  }
+
+  getWorkspaceId() {
+    return this.workspaceId;
   }
 
   private async authedFetch(path: string, init?: RequestInit) {

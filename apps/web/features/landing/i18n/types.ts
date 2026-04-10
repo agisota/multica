@@ -1,10 +1,9 @@
-export type Locale = "en" | "zh";
+export type Locale = "ru";
 
-export const locales: Locale[] = ["en", "zh"];
+export const locales: Locale[] = ["ru"];
 
 export const localeLabels: Record<Locale, string> = {
-  en: "EN",
-  zh: "\u4e2d\u6587",
+  ru: "RU",
 };
 
 type FeatureSection = {
@@ -20,7 +19,7 @@ type FooterGroup = {
 };
 
 export type LandingDict = {
-  header: { github: string; login: string; dashboard: string };
+  header: { login: string; dashboard: string };
   hero: {
     headlineLine1: string;
     headlineLine2: string;
@@ -42,6 +41,18 @@ export type LandingDict = {
     steps: { title: string; description: string }[];
     cta: string;
     ctaGithub: string;
+  };
+  contact: {
+    label: string;
+    title: string;
+    description: string;
+    nameLabel: string;
+    emailLabel: string;
+    companyLabel: string;
+    messageLabel: string;
+    submit: string;
+    success: string;
+    error: string;
   };
   openSource: {
     label: string;

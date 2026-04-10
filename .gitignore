@@ -33,6 +33,7 @@ apps/web/test-results/
 
 # context (agent workspace)
 .context
+.omx/
 
 # local settings
 .claude/
@@ -45,3 +46,7 @@ _features/
 *.dmg
 *.app
 server/server
+
+# local Next.js build artifacts
+apps/web/.next-deploy/
+apps/web/.next.stale-*/

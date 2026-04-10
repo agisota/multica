@@ -2,13 +2,12 @@ import type { Metadata } from "next";
 import { MulticaLanding } from "@/features/landing/components/multica-landing";
 
 export const metadata: Metadata = {
-  title: "Homepage",
+  title: "Главная",
   description:
-    "Multica — open-source platform that turns coding agents into real teammates. Assign tasks, track progress, compound skills.",
+    "Платформа для управления задачами, рантаймами и AI-агентами в одной команде.",
   openGraph: {
-    title: "Multica — AI-Native Task Management",
-    description:
-      "Manage your human + agent workforce in one place.",
+    title: "Multica — платформа для команд с AI-агентами",
+    description: "Управляйте людьми и AI-агентами в одном рабочем пространстве.",
     url: "/homepage",
   },
   alternates: {

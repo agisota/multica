@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { RuntimeModeIcon } from "./shared";
+import { ProviderLogo } from "./provider-logo";
 
 type RuntimeFilter = "mine" | "all";
 
@@ -35,17 +35,13 @@ function RuntimeListItem({
         isSelected ? "bg-accent" : "hover:bg-accent/50"
       }`}
     >
-      <div
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-          runtime.status === "online" ? "bg-success/10" : "bg-muted"
-        }`}
-      >
-        <RuntimeModeIcon mode={runtime.runtime_mode} />
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+        <ProviderLogo provider={runtime.provider} className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{runtime.name}</div>
         <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-          {ownerMember && (
+          {ownerMember ? (
             <>
               <ActorAvatar
                 actorType="member"
@@ -53,10 +49,10 @@ function RuntimeListItem({
                 size={14}
               />
               <span className="truncate">{ownerMember.name}</span>
-              <span>&middot;</span>
             </>
+          ) : (
+            <span className="truncate">{runtime.runtime_mode}</span>
           )}
-          <span className="truncate">{runtime.provider}</span>
         </div>
       </div>
       <div className="flex items-center gap-1.5 shrink-0">
